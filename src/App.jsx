@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Search, Plus, ShoppingBag, X, ArrowUpDown, Check } from 'lucide-react'
+import { Search, Plus, ShoppingBag, X, ArrowUpDown, Check, ShoppingCart } from 'lucide-react'
 import ProductCard from './components/ProductCard'
 import ProductModal from './components/ProductModal'
+import CartSheet from './components/CartSheet'
 import EmptyState from './components/EmptyState'
 
 const STORAGE_KEY = 'lista-compras-v1'
@@ -81,6 +82,7 @@ export default function App() {
   const [editingProduct, setEditingProduct] = useState(null)
   const [deleteId, setDeleteId]             = useState(null)
   const [selectedIds, setSelectedIds]       = useState(new Set())
+  const [isCartOpen, setIsCartOpen]         = useState(false)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(products))
@@ -118,10 +120,15 @@ export default function App() {
   const selectedCount = selectedIds.size
   const allFilteredSelected = filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id))
 
-  const selectedTotal = useMemo(() => {
-    const map = new Map(products.map((p) => [p.id, p.price || 0]))
-    return [...selectedIds].reduce((sum, id) => sum + (map.get(id) ?? 0), 0)
-  }, [selectedIds, products])
+  const selectedProducts = useMemo(
+    () => products.filter((p) => selectedIds.has(p.id)),
+    [selectedIds, products]
+  )
+
+  const selectedTotal = useMemo(
+    () => selectedProducts.reduce((sum, p) => sum + (p.price || 0), 0),
+    [selectedProducts]
+  )
 
   // Handlers
   const handleSave = useCallback((data) => {
@@ -189,13 +196,29 @@ export default function App() {
               </div>
             </div>
 
-            <button
-              onClick={openAddModal}
-              className="flex items-center gap-1.5 bg-stone-900 text-white pl-3.5 pr-4 py-2.5 rounded-full text-sm font-medium hover:bg-stone-800 active:scale-95 transition-[background-color,transform] duration-100 shadow-md shadow-stone-900/10"
-            >
-              <Plus size={15} strokeWidth={2.5} />
-              Adicionar
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Cart icon */}
+              <button
+                onClick={() => setIsCartOpen(true)}
+                className="relative w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-900 active:scale-95 transition-[background-color,color,transform] duration-100"
+                aria-label="Abrir carrinho"
+              >
+                <ShoppingCart size={17} />
+                {selectedCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-stone-900 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
+                    {selectedCount > 9 ? '9+' : selectedCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={openAddModal}
+                className="flex items-center gap-1.5 bg-stone-900 text-white pl-3.5 pr-4 py-2.5 rounded-full text-sm font-medium hover:bg-stone-800 active:scale-95 transition-[background-color,transform] duration-100 shadow-md shadow-stone-900/10"
+              >
+                <Plus size={15} strokeWidth={2.5} />
+                Adicionar
+              </button>
+            </div>
           </div>
 
           {/* Search + Sort */}
@@ -331,10 +354,20 @@ export default function App() {
                 {selectedCount} {selectedCount === 1 ? 'item' : 'itens'}
               </span>
 
-              {/* Total */}
-              <div className="ml-auto text-right flex-shrink-0">
-                <p className="text-[11px] text-stone-400 leading-none mb-0.5">Total selecionado</p>
-                <p className="text-base font-bold leading-none">{formatPrice(selectedTotal)}</p>
+              {/* Total + Ver carrinho */}
+              <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                <div className="text-right">
+                  <p className="text-[11px] text-stone-400 leading-none mb-0.5">Total</p>
+                  <p className="text-base font-bold leading-none">{formatPrice(selectedTotal)}</p>
+                </div>
+
+                <button
+                  onClick={() => setIsCartOpen(true)}
+                  className="flex items-center gap-1.5 bg-white text-stone-900 text-xs font-semibold px-3.5 py-2 rounded-xl hover:bg-stone-100 active:scale-95 transition-[background-color,transform] duration-100"
+                >
+                  <ShoppingCart size={13} />
+                  Carrinho
+                </button>
               </div>
 
               {/* Clear */}
@@ -349,6 +382,14 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Cart Sheet ── */}
+      <CartSheet
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        products={selectedProducts}
+        total={selectedTotal}
+      />
 
       {/* ── Product Modal ── */}
       <ProductModal
