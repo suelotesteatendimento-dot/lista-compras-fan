@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Search, Plus, ShoppingBag, X, ArrowUpDown, Check, ShoppingCart } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { Search, Plus, ShoppingBag, X, ArrowUpDown, Check, ShoppingCart, MoreVertical, Upload, Download, AlertCircle } from 'lucide-react'
 import ProductCard from './components/ProductCard'
 import ProductModal from './components/ProductModal'
 import CartSheet from './components/CartSheet'
 import EmptyState from './components/EmptyState'
+import Toast from './components/Toast'
 
 const STORAGE_KEY = 'lista-compras-v1'
 
@@ -83,6 +84,10 @@ export default function App() {
   const [deleteId, setDeleteId]             = useState(null)
   const [selectedIds, setSelectedIds]       = useState(new Set())
   const [isCartOpen, setIsCartOpen]         = useState(false)
+  const [showBackupMenu, setShowBackupMenu] = useState(false)
+  const [importData, setImportData]         = useState(null) // produtos pendentes de confirmação
+  const [toasts, setToasts]                 = useState([])
+  const importInputRef                      = useRef(null)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(products))
@@ -175,6 +180,89 @@ export default function App() {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
 
+  // ── Toast helpers ──
+  const showToast = useCallback((message, type = 'success') => {
+    setToasts((prev) => [...prev, { id: Date.now(), message, type }])
+  }, [])
+
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  // ── Export ──
+  const handleExport = useCallback(() => {
+    const json = JSON.stringify(products, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `lista-compras-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    setShowBackupMenu(false)
+    showToast(`${products.length} ${products.length === 1 ? 'produto exportado' : 'produtos exportados'}`)
+  }, [products, showToast])
+
+  // ── Import — leitura e validação do arquivo ──
+  const handleImportFile = useCallback((e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    e.target.value = ''
+    setShowBackupMenu(false)
+
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result)
+
+        if (!Array.isArray(parsed)) throw new Error('O arquivo deve conter um array de produtos.')
+        if (parsed.length === 0) throw new Error('O arquivo está vazio.')
+
+        const valid = parsed.every(
+          (p) => p && typeof p === 'object' && typeof p.name === 'string' && p.name.trim()
+        )
+        if (!valid) throw new Error('Alguns produtos não possuem o campo "name".')
+
+        // normaliza campos opcionais em falta
+        const normalized = parsed.map((p) => ({
+          id:          p.id || crypto.randomUUID(),
+          name:        p.name.trim(),
+          price:       typeof p.price === 'number' ? p.price : 0,
+          category:    p.category  || '',
+          brand:       p.brand     || '',
+          description: p.description || '',
+          image:       p.image     || '',
+          link:        p.link      || '',
+          createdAt:   p.createdAt || Date.now(),
+        }))
+
+        setImportData(normalized)
+      } catch (err) {
+        showToast(err.message, 'error')
+      }
+    }
+    reader.onerror = () => showToast('Não foi possível ler o arquivo.', 'error')
+    reader.readAsText(file)
+  }, [showToast])
+
+  // ── Import — aplica substituição ou mesclagem ──
+  const applyImport = useCallback((mode) => {
+    if (!importData) return
+    if (mode === 'replace') {
+      setProducts(importData)
+      showToast(`Lista substituída com ${importData.length} produtos.`)
+    } else {
+      // mescla: mantém existentes, adiciona novos por id
+      setProducts((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id))
+        const toAdd = importData.filter((p) => !existingIds.has(p.id))
+        showToast(`${toAdd.length} produto(s) adicionado(s) à lista.`)
+        return [...prev, ...toAdd]
+      })
+    }
+    setImportData(null)
+  }, [importData, showToast])
+
   return (
     <div className="min-h-screen bg-stone-50">
       {/* ── Header ── */}
@@ -197,6 +285,48 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Backup menu */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowBackupMenu((v) => !v)}
+                  className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 hover:bg-stone-50 hover:text-stone-900 active:scale-95 transition-[background-color,color,transform] duration-100"
+                  aria-label="Backup da lista"
+                >
+                  <MoreVertical size={17} />
+                </button>
+
+                {showBackupMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowBackupMenu(false)} />
+                    <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-xl border border-stone-100 overflow-hidden z-20 animate-scale-in">
+                      <button
+                        onClick={handleExport}
+                        className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-stone-700 hover:bg-stone-50 transition-colors duration-100"
+                      >
+                        <Download size={15} className="text-stone-400" />
+                        Exportar lista
+                      </button>
+                      <div className="h-px bg-stone-100 mx-4" />
+                      <button
+                        onClick={() => { importInputRef.current?.click() }}
+                        className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-stone-700 hover:bg-stone-50 transition-colors duration-100"
+                      >
+                        <Upload size={15} className="text-stone-400" />
+                        Importar lista
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={handleImportFile}
+                />
+              </div>
+
               {/* Cart icon */}
               <button
                 onClick={() => setIsCartOpen(true)}
@@ -383,6 +513,64 @@ export default function App() {
         </div>
       )}
 
+      {/* ── Import confirmation modal ── */}
+      {importData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-black/50 animate-fade-in" onClick={() => setImportData(null)} />
+          <div className="relative bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl animate-scale-in">
+            <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-4">
+              <Upload size={22} className="text-blue-500" strokeWidth={1.75} />
+            </div>
+
+            <h3 className="text-base font-semibold text-stone-900 mb-1">
+              Importar {importData.length} {importData.length === 1 ? 'produto' : 'produtos'}
+            </h3>
+            <p className="text-sm text-stone-500 mb-6">
+              Como deseja importar esses produtos?
+            </p>
+
+            <div className="space-y-2.5">
+              <button
+                onClick={() => applyImport('merge')}
+                className="w-full py-3 rounded-2xl bg-stone-900 text-white text-sm font-medium hover:bg-stone-800 active:scale-95 transition-[background-color,transform] duration-100"
+              >
+                Mesclar com lista atual
+              </button>
+              <button
+                onClick={() => applyImport('replace')}
+                className="w-full py-3 rounded-2xl border border-stone-200 text-stone-700 text-sm font-medium hover:bg-stone-50 active:scale-95 transition-[background-color,transform] duration-100"
+              >
+                Substituir lista atual
+              </button>
+              <button
+                onClick={() => setImportData(null)}
+                className="w-full py-2 text-sm text-stone-400 hover:text-stone-600 transition-colors duration-100"
+              >
+                Cancelar
+              </button>
+            </div>
+
+            {/* Preview */}
+            <div className="mt-5 pt-4 border-t border-stone-100">
+              <p className="text-xs text-stone-400 mb-2">Prévia dos produtos</p>
+              <ul className="space-y-1 max-h-28 overflow-y-auto">
+                {importData.slice(0, 5).map((p, i) => (
+                  <li key={i} className="flex items-center justify-between text-xs">
+                    <span className="text-stone-700 truncate flex-1 mr-2">{p.name}</span>
+                    <span className="text-stone-400 flex-shrink-0">
+                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(p.price)}
+                    </span>
+                  </li>
+                ))}
+                {importData.length > 5 && (
+                  <li className="text-xs text-stone-400">+{importData.length - 5} mais…</li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Cart Sheet ── */}
       <CartSheet
         isOpen={isCartOpen}
@@ -429,6 +617,14 @@ export default function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {/* ── Toasts ── */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-6 right-4 z-[60] flex flex-col gap-2 items-end pointer-events-none">
+          {toasts.map((t) => (
+            <Toast key={t.id} message={t.message} type={t.type} onDismiss={() => dismissToast(t.id)} />
+          ))}
         </div>
       )}
     </div>
